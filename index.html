@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kingsfall</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap">
+<style>
+:root{--bg:#1b1420;--panel:#2d2233;--ink:#f4ead2;--dim:#b3a58a;--gold:#ffcc33;--line:#6b5a3c;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:10px/1.9 'Press Start 2P',ui-monospace,Menlo,Consolas,monospace;color-scheme:dark}
+.wrap{max-width:640px;margin:0 auto;padding:10px}
+header{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 2px 10px}
+h1{font:16px 'Press Start 2P',monospace;margin:0;color:var(--gold);text-shadow:2px 2px 0 #7a3b12}
+.stats{color:var(--dim);font-size:8px}
+canvas{width:100%;height:auto;display:block;image-rendering:pixelated;background:#1b1420;border:4px solid var(--line);touch-action:manipulation}
+.panel{background:var(--panel);border:4px solid var(--line);margin-top:10px;padding:10px 12px}
+#info{min-height:40px;font-size:9px;word-break:break-word}
+#info b{color:var(--gold);font-weight:normal}
+#log{color:var(--dim);font-size:8px;margin-top:6px;min-height:16px}
+.btns{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+button{font:inherit;font-size:9px;padding:10px 12px;border:3px solid #0f0b14;background:#5a4a6e;color:var(--ink);box-shadow:inset -3px -3px 0 #3a2d4a,inset 3px 3px 0 #7d6a96;cursor:pointer}
+button:active{transform:translateY(2px)}
+button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+button.primary{background:#d9a21b;color:#1b1420;box-shadow:inset -3px -3px 0 #a3730f,inset 3px 3px 0 #ffd766}
+button:disabled{opacity:.4;cursor:default}
+#over,#start,#qc{position:fixed;inset:0;background:rgba(10,6,14,.9);display:none;align-items:center;justify-content:center;flex-direction:column;gap:18px;text-align:center;padding:20px}
+#start{display:flex;overflow-y:auto;justify-content:flex-start;padding-top:20px}#start .btns{justify-content:center}#over h2,#start h2,#qc h2{font:24px 'Press Start 2P',monospace;margin:0;color:var(--gold);text-shadow:3px 3px 0 #7a3b12}
+.help{color:var(--dim);font-size:8px;margin-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header><h1>Kingsfall</h1><div class="stats" id="stats"></div><button id="quit" style="font-size:8px;padding:6px 8px">Quit</button><button id="mute" style="font-size:8px;padding:6px 8px">Music: on</button></header>
+  <canvas id="cv"></canvas>
+  <div class="panel"><div id="info"></div><div id="log"></div>
+    <div class="btns" id="btns"></div></div>
+  <div class="help">Tap a blue unit or town. Tap a marked hex to move; red means attack. Archers shoot 2 hexes, cavalry moves 3. Stack 3 units on one hex for a formation bonus (tap a stack again to switch units). Blue crystals boost nearby cities (+1 each); the central gold mine is worth 3x (+3). Merge 3 matching units on or beside each other into a bigger block (Company, then Battalion): they hit and defend much harder but only 1 block fits per hex. Capture every rival city to win.</div>
+</div>
+<div id="start"><h2>Kingsfall</h2><div>Choose your era</div>
+<div class="btns"><button class="opt primary" data-era="anc">Ancient</button><button class="opt" data-era="nap">Napoleonic</button></div>
+<div>Your faction</div><div class="btns" id="facts"></div>
+<div id="fdesc" style="max-width:520px;font-size:9px;line-height:1.9;color:#ffcc33"></div>
+<div>Number of teams</div>
+<div class="btns"><button class="opt primary" data-nt="2">2</button><button class="opt" data-nt="3">3</button><button class="opt" data-nt="4">4</button></div>
+<button class="primary" id="go">Start game</button></div>
+<div id="qc"><h2>Are you sure?</h2><div>Your game will be lost.</div><div class="btns" style="justify-content:center"><button class="primary" id="qyes">Yes</button><button id="qno">No</button></div></div>
+<div id="over"><h2 id="overT"></h2><div id="overD"></div><button class="primary" id="again">Play again</button></div>
+
+<script>
+// ---- Settings you can tweak ----
+const W=10, H=9, S=22;                 // map columns, rows, tile size
+const COST={warrior:4,archer:5,cavalry:6,settler:6};    // production needed to train each unit
+const NAMES=["Kingsholt","Stonebridge","Oakhaven","Ravenmoor","Wyndale"];
+const TERRAIN=[{n:"Sea",c:"#2f5fb0"},{n:"Plains",c:"#5aa63c"},{n:"Forest",c:"#3b7d2c"},{n:"Hills",c:"#a08d6a"}];
+const DEF_BONUS=[0,0,1,2], MOVE_COST=[9,1,2,2];
+const SQ=Math.sqrt(3);
+const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+cv.width=Math.ceil(SQ*S*(W+.5))+4; cv.height=Math.ceil(S*1.5*(H-1)+2*S)+4;
+let map,units,cities,sel,turn,over,logMsg,cityCount;
+
+const UNIT={warrior:{str:5,hp:10,mv:2},archer:{str:4,hp:8,mv:2},cavalry:{str:6,hp:10,mv:3},settler:{str:1,hp:6,mv:2}};
+const ERAS={
+ anc:{set:'med',fort:"city",f:[
+  {name:"Rome",col:"#c0282d",base:"b_rome",cap:"Rome",cities:["Ostia","Capua","Ravenna","Massilia","Carthago Nova"],units:{warrior:"Legionary",archer:"Sagittarius",cavalry:"Equites",settler:"Colonist"},pal:{}},
+  {name:"Parthia",col:"#8a4fc0",base:"b_parthia",cap:"Ctesiphon",cities:["Ecbatana","Hecatompylos","Nisa","Seleucia","Susa"],units:{warrior:"Spearman",archer:"Foot Archer",cavalry:"Cataphract",settler:"Settler"},pal:{y:"#c9a24a"}},
+  {name:"Han",col:"#d9a520",base:"b_han",cap:"Chang'an",cities:["Luoyang","Chengdu","Linzi","Wan","Handan"],units:{warrior:"Halberdier",archer:"Crossbowman",cavalry:"Han Cavalry",settler:"Settler"},pal:{y:"#5a4a3a"}},
+  {name:"Carthage",col:"#2f8fc8",base:"b_carthage",cap:"Carthage",cities:["Utica","Hadrumetum","Gades","Panormus","Lilybaeum"],units:{warrior:"Libyan Spearman",archer:"Balearic Slinger",cavalry:"Numidian Rider",settler:"Colonist"},pal:{y:"#b98a4a"}}]},
+ nap:{set:'nap',fort:"town",f:[
+  {name:"France",col:"#2f56d0",base:"b_france",cap:"Versailles",cities:["Paris","Lyon","Marseille","Bordeaux","Lille"],units:{warrior:"Line Infantry",archer:"Voltigeur",cavalry:"Hussar",settler:"Colonist"},pal:{}},
+  {name:"Russia",col:"#3a9a55",base:"b_russia",cap:"Moscow",cities:["St Petersburg","Smolensk","Kiev","Kazan","Tula"],units:{warrior:"Grenadier",archer:"Jager",cavalry:"Cossack",settler:"Settler"},pal:{e:"#ffffff",k:"#e33"}},
+  {name:"Britain",col:"#c8323c",base:"b_britain",cap:"London",cities:["Portsmouth","Bristol","Liverpool","Edinburgh","Dover"],units:{warrior:"Redcoat",archer:"Rifleman",cavalry:"Light Dragoon",settler:"Colonist"},pal:{k:"#ffffff"}},
+  {name:"Spain",col:"#e3b023",base:"b_spain",cap:"Madrid",cities:["Seville","Barcelona","Valencia","Cadiz","Zaragoza"],units:{warrior:"Infantry",archer:"Guerrillero",cavalry:"Lancer",settler:"Settler"},pal:{w:"#e8dcb0"}}]}
+};
+const EXTRA={
+ Rome:{desc:"STRENGTH: formations get +5 (not +3); roads give every city +1 production. WEAKNESS: Equites cost +2.",bon:{fb:5,pb:1,cd:{cavalry:2}},org:{i:["Century","Cohort"],c:["Turma","Ala"]}},
+ Parthia:{desc:"STRENGTH: Foot Archers +2 strength; Cataphracts move 4. WEAKNESS: Spearmen -1 strength; cities -1 production.",bon:{sb:{archer:2,warrior:-1},mv:{cavalry:1},pb:-1},org:{i:["Company","Host"]},pal2:{b:"#9a9aa6"},ov:{warrior:{0:"..........y.....",7:"........pppp....",8:"........pppp....",9:"........pppp....",10:"........pppp...."},archer:{0:"........yyyy....",1:".......yyyyyy..."}}},
+ Han:{desc:"STRENGTH: mass levies, every unit costs 1 less. WEAKNESS: Halberdiers -1 strength.",bon:{cd:{all:-1},sb:{warrior:-1}},org:{i:["Qu","Bu"],c:["Qu","Bu"]},pal2:{b:"#2a2018"},ov:{warrior:{0:".......dddd.....",1:"......dddddd....",6:"wwwwwwwkwwyyyyy.",7:"........pppp....",8:"........pppp....",9:"........pppp....",10:"........pppp...."}}},
+ Carthage:{desc:"STRENGTH: merchant empire, resource squares give double; Numidian Riders +1 strength. WEAKNESS: Libyan Spearmen -1 strength.",bon:{rm:2,sb:{cavalry:1,warrior:-1}},org:{i:["Company","Phalanx"]},pal2:{b:"#c9a26a"},ov:{warrior:{7:"..kkkkkkk.pppp...",8:"..kpppppk.pppp...",9:"..kpppppk.pppp...",10:"..kkkkkkk.pppp..."},archer:{3:"........ssss....",4:"...k....pppp....",5:"...kk...pppp....",6:".....kkkwwsppp..",7:"........pppp.z..",8:"........pppp.zz.",9:"........pppp.zz.",10:"........dddd.z.."}}},
+ France:{desc:"STRENGTH: Grande Armee, formations +4; Line Infantry +1 strength. WEAKNESS: long supply lines, cities -1 production.",bon:{fb:4,sb:{warrior:1},pb:-1}},
+ Russia:{desc:"STRENGTH: endless manpower, all units +3 health; Cossacks move 4. WEAKNESS: Jagers -1 strength; Grenadiers cost +1.",bon:{hp:3,mv:{cavalry:1},sb:{archer:-1},cd:{warrior:1}},org:{c:["Sotnia","Regiment"]},pal2:{b:"#2a2018"},ov:{warrior:{0:"........kk......",1:"........dddd....",2:"........dkkd....",3:"........dddd...."}}},
+ Britain:{desc:"STRENGTH: Baker rifles, Riflemen +2 strength; trade wealth +1 production per city. WEAKNESS: small army, Redcoats cost +1.",bon:{sb:{archer:2},pb:1,cd:{warrior:1}},pal2:{b:"#8a8a8a"},ov:{warrior:{1:".........w......",3:"........dwwd....",9:"...pwpwpwpppzzz."}}},
+ Spain:{desc:"STRENGTH: guerrilla war, +2 strength in forests and hills. WEAKNESS: Lancers -1 strength; cities -1 production.",bon:{tb:2,sb:{cavalry:-1},pb:-1},pal2:{b:"#e8e8e8"},ov:{warrior:{0:"................",1:".........k......",2:"......d..dd.....",3:".....dddddd.....",4:"....dddddddd...."}}}
+};
+[...ERAS.anc.f,...ERAS.nap.f].forEach(f=>{const X=EXTRA[f.name];f.desc=X.desc;f.bon=X.bon;f.ov=X.ov||{};f.org=X.org||{};Object.assign(f.pal,X.pal2||{});});
+const hpOf=(o,t)=>UNIT[t].hp+team[o].b.hp, mvOf=u=>Math.max(1,UNIT[u.t].mv+(team[u.o].b.mv[u.t]||0)-((u.lv||0)>=2?1:0)), maxHp=u=>Math.round(hpOf(u.o,u.t)*[1,2.4,5.8][u.lv||0]);
+const costOf=(o,t)=>Math.max(3,COST[t]+(team[o].b.cd[t]||0)+(team[o].b.cd.all||0));
+let era='anc',fid=0,NT=2,E=ERAS.anc,started=false,muted=false;
+// Chiptune tunes: [midi note, length in units]; roots = bass note per bar
+const MUS={
+ Rome:{u:.16,pre:0,bars:8,bs:4,roots:[48,48,43,48,48,48,43,48],mel:[[67,2],[72,2],[76,2],[79,2],[79,3],[76,1],[72,4],[76,2],[74,2],[72,2],[74,2],[76,4],[67,4],[72,3],[72,1],[76,2],[79,2],[79,3],[81,1],[79,4],[77,2],[76,2],[74,2],[72,2],[72,6],[0,2]]},
+ Parthia:{u:.18,pre:0,bars:8,bs:4,roots:[50,50,50,50,50,50,50,50],w:'sawtooth',mel:[[74,3],[75,1],[78,4],[79,3],[78,1],[75,2],[74,2],[75,2],[74,2],[70,2],[74,2],[74,6],[0,2],[81,3],[79,1],[78,4],[79,2],[78,2],[75,2],[74,2],[70,3],[72,1],[74,4],[75,2],[74,6]]},
+ Han:{u:.28,pre:0,bars:8,bs:8,roots:[48,48,45,45,48,48,45,48],w:'triangle',mel:[[72,2],[74,2],[76,4],[79,4],[76,2],[74,2],[72,2],[69,2],[67,4],[69,4],[72,4],[76,2],[79,2],[81,4],[79,2],[76,2],[74,4],[74,2],[76,2],[72,2],[69,2],[72,8]]},
+ Carthage:{u:.17,pre:0,bars:6,bs:3,roots:[38,38,38,43,43,38,38],w:'sawtooth',mel:[[62,2],[63,2],[65,2],[67,4],[65,2],[63,2],[62,4],[67,2],[69,2],[70,2],[70,4],[69,2],[67,2],[65,4],[63,2],[62,4]]},
+ France:{u:.14,pre:2,bars:16,bs:4,roots:[48,48,43,48,48],mel:[[67,2],[72,6],[72,2],[72,4],[74,4],[76,6],[74,2],[72,4],[74,4],[79,6],[79,2],[79,4],[76,4],[72,6],[74,2],[76,4],[74,4],[72,12],[0,4]]},
+ Russia:{u:.17,pre:0,bars:8,bs:4,roots:[50,50,46,50,50,43,46,50],mel:[[74,4],[74,2],[77,2],[81,4],[79,2],[77,2],[77,4],[76,2],[74,2],[74,6],[0,2],[69,2],[74,2],[77,2],[81,2],[79,4],[77,2],[76,2],[74,2],[72,2],[70,2],[69,2],[74,6],[0,2]]},
+ Britain:{u:.16,pre:2,bars:8,bs:4,roots:[43,43,48,43,43,43,50,43],mel:[[62,2],[67,3],[67,1],[71,2],[74,2],[79,3],[78,1],[76,2],[74,2],[72,3],[74,1],[76,2],[72,2],[71,6],[0,2],[67,3],[67,1],[71,2],[74,2],[79,3],[81,1],[79,2],[78,2],[76,2],[74,2],[71,2],[69,2],[67,6],[0,2]]},
+ Spain:{u:.17,pre:0,bars:8,bs:4,roots:[48,48,43,43,48,48,43,48],mel:[[67,3],[67,1],[72,3],[72,1],[76,3],[76,1],[79,3],[79,1],[77,3],[76,1],[74,3],[72,1],[74,6],[67,2],[67,3],[67,1],[72,3],[72,1],[76,3],[79,1],[84,3],[79,1],[77,2],[76,2],[74,2],[71,2],[72,6],[0,2]]}
+};
+let AC,tmr,master;
+const mf=n=>440*Math.pow(2,(n-69)/12);
+function tone(f,s,d,type,v){const o=AC.createOscillator(),g=AC.createGain();o.type=type;o.frequency.value=f;g.gain.setValueAtTime(v,s);g.gain.setValueAtTime(v,s+d*.75);g.gain.linearRampToValueAtTime(.0001,s+d*.97);o.connect(g);g.connect(master);o.start(s);o.stop(s+d);}
+function loop(M,s){
+  let x=0;M.mel.forEach(([n,d])=>{if(n)tone(mf(n),s+x*M.u,d*M.u,M.w||'square',.05);x+=d;});
+  x=M.pre;M.roots.forEach(r=>{for(let k=0;k<M.bars/M.bs;k++){tone(mf(r+(k%2?7:0)),s+x*M.u,M.bs*M.u*.9,'triangle',.11);x+=M.bs;}});
+}
+function music(name,on){
+  clearInterval(tmr);
+  if(master){master.gain.value=0;master.disconnect();master=null;}
+  if(!on)return;
+  AC=AC||new (window.AudioContext||window.webkitAudioContext)();AC.resume();master=AC.createGain();master.connect(AC.destination);
+  const M=MUS[name],len=(M.pre+M.roots.length*M.bars)*M.u;let next=AC.currentTime+.1;
+  const go=()=>{while(next<AC.currentTime+1.2){loop(M,next);next+=len;}};
+  go();tmr=setInterval(go,500);
+}
+const $=id=>document.getElementById(id);
+const ctr=(c,r)=>[SQ*S*(c+.5*(r&1))+SQ*S/2+2, S*1.5*r+S+2];
+function nb(c,r){
+  const d=(r&1)?[[1,0],[-1,0],[1,-1],[0,-1],[1,1],[0,1]]:[[1,0],[-1,0],[0,-1],[-1,-1],[0,1],[-1,1]];
+  return d.map(([a,b])=>[c+a,r+b]).filter(([x,y])=>x>=0&&y>=0&&x<W&&y<H);
+}
+function dist(a,b){
+  const cube=(c,r)=>{const x=c-(r-(r&1))/2;return[x,r,-x-r]};
+  const p=cube(a.c,a.r),q=cube(b.c,b.r);
+  return Math.max(Math.abs(p[0]-q[0]),Math.abs(p[1]-q[1]),Math.abs(p[2]-q[2]));
+}
+const unitAt=(c,r)=>units.find(u=>u.c===c&&u.r===r);
+const cityAt=(c,r)=>cities.find(k=>k.c===c&&k.r===r);
+const say=t=>{logMsg=t;$('log').textContent=t};
+
+const STARTS=[[1,7],[8,1],[1,1],[8,7]];
+let team=[],res=[];
+function init(){
+  E=ERAS[era];
+  const rivals=E.f.filter((f,i)=>i!==fid).sort(()=>Math.random()-.5);
+  team=[E.f[fid],...rivals.slice(0,NT-1)];OWN=team.map(f=>f.col);team.forEach(f=>f.b=Object.assign({sb:{},fb:3,pb:0,cd:{},mv:{},hp:0,rm:1,tb:0},f.bon));
+  map=[];res=[];
+  for(let r=0;r<H;r++){map.push([]);res.push([]);for(let c=0;c<W;c++){const v=Math.random();map[r].push(v<.14?0:v<.62?1:v<.83?2:3);res[r].push(0);}}
+  STARTS.forEach(([c,r])=>{map[r][c]=1;const n=nb(c,r);n.forEach(([x,y])=>map[y][x]=1);n.slice(1,3).forEach(([x,y])=>res[y][x]=1);});
+  for(let k=0;k<9;k++){const c=1+Math.floor(Math.random()*(W-2)),r=1+Math.floor(Math.random()*(H-2));
+    if(map[r][c]>0&&!res[r][c]&&STARTS.every(([a,b])=>dist({c,r},{c:a,r:b})>2))res[r][c]=1;}
+  if(map[4][5]===0)map[4][5]=1;
+  res[4][5]=3;
+  units=[];cities=[];
+  const mk=(t,o,c,r)=>units.push({t,o,c,r,hp:hpOf(o,t),mv:mvOf({t,o})});
+  for(let i=0;i<NT;i++){
+    const [c,r]=STARTS[i],[x,y]=nb(c,r)[0];
+    if(i===0)mk('settler',0,c,r);
+    else cities.push({o:i,c,r,name:team[i].cap,prod:0,build:'warrior'});
+    mk('warrior',i,x,y);
+  }
+  sel=null;turn=1;over=false;cityCount=0;
+  $('over').style.display='none';
+  say(`Your ${team[0].units.settler} is ready. Select it, then found a ${E.fort}.`);
+  draw();ui();
+}
+
+// ---- Rules ----
+function strength(u,c,r){
+  const B=team[u.o].b,base=UNIT[u.t].str+[0,2,4][u.lv||0]+(B.sb[u.t]||0)+(map[r][c]>=2?B.tb:0)+(units.filter(x=>x.c===c&&x.r===r&&x.o===u.o).length>=3?B.fb:0);
+  return base+DEF_BONUS[map[r][c]]+(cityAt(c,r)?2:0);
+}
+function options(u){
+  if(u.mv<=0)return[];
+  const out=[];
+  nb(u.c,u.r).forEach(([c,r])=>{
+    if(map[r][c]===0)return;
+    const e=unitAt(c,r), k=cityAt(c,r);
+    if(e){ if(e.o!==u.o){ if(u.t!=='settler')out.push({c,r,atk:true}); } else if(!u.lv&&units.filter(x=>x.c===c&&x.r===r).length<3&&units.every(x=>x.c!==c||x.r!==r||!x.lv))out.push({c,r}); }
+    else out.push({c,r});
+  });
+  if(u.t==='archer')units.forEach(e=>{if(e.o!==u.o&&dist(u,e)===2)out.push({c:e.c,r:e.r,atk:true});});
+  return out;
+}
+function step(u,c,r){
+  u.mv=Math.max(0,u.mv-MOVE_COST[map[r][c]]);
+  u.c=c;u.r=r;
+  const k=cityAt(c,r);
+  if(k&&k.o!==u.o){k.o=u.o;k.prod=0;say(u.o===0?`You captured ${k.name}!`:`${team[u.o].name} captured ${k.name}!`);}
+}
+function attack(a,d){
+  const A=strength(a,a.c,a.r), D=strength(d,d.c,d.r);
+  const f=()=>.6+Math.random()*.8;
+  const sz=q=>[1,2,4][q.lv||0],hitD=Math.round(7*A/(A+D)*f()*sz(a)), hitA=dist(a,d)>1?0:Math.round(5*D/(A+D)*f()*sz(d));
+  d.hp-=hitD;a.hp-=hitA;a.mv=0;
+  const who=a.o===0?"Your":"Enemy";
+  say(`${who} ${uname(a)} dealt ${Math.max(hitD,0)} and took ${Math.max(hitA,0)}.`);
+  if(d.hp<=0){units=units.filter(x=>x!==d);if(a.hp>0&&dist(a,d)===1&&!unitAt(d.c,d.r))step(a,d.c,d.r);}
+  if(a.hp<=0){units=units.filter(x=>x!==a);if(sel===a)sel=null;}
+}
+function canFound(u){
+  return u&&u.t==='settler'&&u.o===0&&map[u.r][u.c]>0&&!cityAt(u.c,u.r)&&cities.every(k=>dist(k,u)>=3);
+}
+function found(u){
+  cities.push({o:0,c:u.c,r:u.r,name:[team[0].cap,...team[0].cities][cityCount++%6],prod:0,build:'warrior'});
+  units=units.filter(x=>x!==u);
+  sel=cities[cities.length-1];
+  say(`${sel.name} founded! Choose what it trains, then end your turn.`);
+}
+function rate(k){const B=team[k.o].b;return Math.max(1,2+B.pb+B.rm*(res[k.r][k.c]+nb(k.c,k.r).reduce((s,[c,r])=>s+res[r][c],0)));}
+function spawn(k){
+  const spots=[[k.c,k.r],...nb(k.c,k.r)].filter(([c,r])=>{const at=units.filter(x=>x.c===c&&x.r===r);return map[r][c]>0&&at.length<3&&at.every(x=>x.o===k.o&&!x.lv);});
+  if(!spots.length)return false;
+  const [c,r]=spots[0];
+  units.push({t:k.build,o:k.o,c,r,hp:hpOf(k.o,k.build),mv:0});
+  return true;
+}
+
+function endTurn(){
+  if(over)return;
+  cities.filter(k=>k.o===0).forEach(k=>{
+    k.prod+=rate(k);
+    if(k.prod>=costOf(k.o,k.build)&&spawn(k)){k.prod-=costOf(k.o,k.build);say(`${k.name} trained a ${k.build}.`);}
+  });
+  // Rival teams
+  cities.filter(k=>k.o>0).forEach(k=>{
+    k.prod+=rate(k);
+    const b=['warrior','archer','cavalry'][Math.floor(Math.random()*3)];
+    if(k.prod>=costOf(k.o,b)&&units.filter(x=>x.o===k.o).length<6&&spawn({...k,build:b}))k.prod-=costOf(k.o,b);
+  });
+  units.filter(u=>u.o>0).forEach(u=>{if(units.includes(u)&&mergeOK(u))merge(u);});
+  units.filter(u=>u.o>0).forEach(u=>u.mv=mvOf(u));
+  units.filter(u=>u.o>0).forEach(enemyAct);
+  units.forEach(u=>{u.mv=u.o>0?0:mvOf(u);});
+  turn++;sel=null;
+  checkEnd();draw();ui();
+}
+function enemyAct(u){
+  const home=cities.find(k=>k.o===u.o&&k.c===u.c&&k.r===u.r);
+  const mine=units.filter(x=>x.o===u.o).length;
+  const foes=[...units.filter(x=>x.o!==u.o),...cities.filter(k=>k.o!==u.o)];
+  const near=foes.length?foes.reduce((a,b)=>dist(u,a)<=dist(u,b)?a:b):null;
+  if(home&&mine<2&&(!near||dist(u,near)>3))return;   // keep one guard home
+  for(let i=0;i<mvOf(u)&&units.includes(u)&&u.mv>0&&near;i++){
+    const opts=options(u);
+    const hit=opts.find(o=>o.atk);
+    if(hit){attack(u,unitAt(hit.c,hit.r));return;}
+    if(!opts.length)return;
+    opts.sort((a,b)=>dist(a,near)-dist(b,near));
+    if(dist(opts[0],near)>=dist(u,near)&&i>0)return;
+    step(u,opts[0].c,opts[0].r);
+  }
+}
+function checkEnd(){
+  if(!cities.some(k=>k.o>0))finish("Victory","All rivals have fallen. Glory is yours!");
+  else if(!cities.some(k=>k.o===0)&&!units.some(u=>u.o===0&&u.t==='settler'))finish("Defeat","Your kingdom has fallen.");
+}
+function finish(t,d){over=true;$('overT').textContent=t;$('overD').textContent=d+` (Turn ${turn})`;$('over').style.display='flex';}
+
+// ---- Drawing (8-bit pixel art) ----
+const PAL={d:"#0f0b14",s:"#f2c9a0",w:"#f4f4f4",b:"#8a5a2b",c:"#b4b0bc",g:"#1f5a22",h:"#4bb03a",m:"#7d6d58",k:"#ffcc33",n:"#1f2a5e",y:"#9a9aa6",e:"#fff4b0",z:"#6b6b6b",q:"#4fd8ff",Q:"#1a86c8"};
+let OWN=["#3a63e6","#c8323c","#3fae52","#b06be0"], ALT=["#264f9c","#4c9a34","#2f6b24","#8c7a5a"];
+const SPR={
+ tree:[".hhh.","hhghh","ggggg",".ggg.","..b.."],
+ peak:["....ww.....","...wwmm..m.","..wmmmmmmmm",".mmmmmmmmmm","mmmddmmmmdm"],
+ med:{
+  warrior:[".........pp.....","........yyyy....","........yyyy....","........yddy....","........yyyy....","........yyyyy...","wwwwwwwwkyyyyy..","...yyyyy.pppp...","...ypppy.pppp...","...ypkpy.pppp...","...ypppy.pppp...","....yyy..dddd...",".........yyyy...",".........yy.yy..",".........yy.yy..",".........dd.dd.."],
+  archer:["........pppp....",".......pppppp...","........ssds....","..b.....ssss....","...b....pppp....","...bw...pppp....","..ybwwwwwwsppp..","...b....pppp.z..","...bw...pppp.zz.","...b....pppp.zz.","..b.....dddd.z..","........nnnn....","........nn.nn...","........nn.nn...","........dd.dd..."],
+  settler:[".......bbbb.....","......bbbbbb....","........ssd.....","........ssss....","..y.....pppp.bb.","..bss...ppppbbb.","..b..sppppp.bbb.","..b.....pppp.bb.","..b.....dddd....","..b.....nnnn....","..b.....nn.nn...","..b.....nn.nn...","..b.....dd.dd..."],
+  castle:["......dpp....","......dpp....","d.d.d.d.d.d.d","dcccccccccccd","dcpccccccpccd","dccccdddccccd","dccccdddccccd","dccccdddccccd","ddddddddddddd"]
+ },
+ nap:{
+  warrior:[".........e......",".........k......","........dddd....","........dddd....",".......ddddd....","........ssdb....","yyyyyyyybssyyy..","...s....ppppzz..","..ppppppppppzzz.","...pppppppppzzz.","........ppppzz..","........ppppzzz.","........ppppzz..","........dddd.zz.","........wwwww...","........wwwww...","........ww.ww...","........dd.dd..."],
+  cavalry:["............e.........","............k.........","...........dddd.......","...........dddd.......","..........ddddd.......","...........ssdb.......","......y....ppppp......",".....y....ssppppp.....","....y.....ppppp.......","....bbbb..nnnnn.......","...bbbbbbbpppppbbbbbbm","..bdbbbbbbbbbbbbbbbbbb","..bbbbbbbbbbbbbbbbbbb.","....bbbbbbbbbbbbbbbb..","....bd.bd.....bd.bd...","....bd.bd.....bd.bd...","....dd.dd.....dd.dd..."],
+  castle:["......dpw....","......dwp....","dcccccccccccd","dcwcwcwcwcwcd","dcccccccccccd","dccccdddccccd","dccccdddccccd","ddddddddddddd"]
+ }
+};
+SPR.nap.archer=SPR.nap.warrior.map((r,i)=>(i===0?r.replace('e','h'):i===1?r.replace('k','g'):r.split('w').join('n')));
+SPR.nap.settler=SPR.med.settler.map((r,i)=>i<2?r.split('b').join('d'):r);
+SPR.med.cavalry=SPR.nap.cavalry.map((r,i)=>i<2?r.replace(/[ek]/,'p'):i<5?r.split('d').join('y'):i===6?'wwwwwwwwwww'+r.slice(11):i<9?r.split('y').join('.'):r);
+Object.assign(SPR,{
+ res:["...d.d...","..dqdqd..",".dqwqdqd.",".dqqQqQd.","dqQqQdQqd",".ddddddd."],
+ gold:["..dddd..",".dkkkkd.","dkkwwkkd","dkkkkkkd","dbbbbbbd","dddddddd"],
+ b_france:[".....kkk.....","....zzzzz....","zzz.zwdwz.zzz","wwwwwwwwwwwww","wdwdwdwdwdwdw","wwwwwwwwwwwww","wdwdwpppwdwdw","wwwwwpdpwwwww","ddddddddddddd"],
+ b_russia:["......k......",".....ppp.....","....ppppp....","..k...w...k..",".ppp.www.ggg.","ppppwwwwwgggg","wpwpwwdwwpwpw","wwwwwwdwwwwww","ddddddddddddd"],
+ b_britain:["......kp.....","......d......","....ccccc....","cccccwwwccccc","cwcwcwdwcwcwc","cccccwdwccccc","cwcwcwkwcwcwc","cccccwdwccccc","ddddddddddddd"],
+ b_spain:["......k......",".....ppp.....","y.y..ppp..y.y","yyy.wwwww.yyy","ywy.wdwdw.ywy","yyyywwwwwyyyy","ywywydddywywy","yyyyydddyyyyy","ddddddddddddd"],
+ b_rome:["......p......",".ccccccccccc.","cdcdcdcdcdcdc","ccccccccccccc","cdcdcdcdcdcdc","ccccccccccccc","cdcdcdkdcdcdc","cccpcpcdcpcpc","ddddddddddddd"],
+ b_parthia:["..bbbbbbbbb..",".bbbbbbbbbbb.","bbbbdddddbbbb","bbbdddddddbbb","bbbdddddddbbb","bpbdddddddbpb","bbbdddddddbbb","bbbdddddddbbb","ddddddddddddd"],
+ b_han:[".....ppp.....","...ppppppp...","....bbbbb....","..ppppppppp..","...b.bbb.b...","ppppppppppppp",".bwbwbdbwbwb.",".bbbbbbbbbbb.","ddddddddddddd"],
+ b_carthage:["......kp.....",".....yyy.....","....yyyyy....","..wwwwwwwww..","..wdwdwdwdw..","..wdwdwdwdw..","wwwwwwwwwwwww","wwppwwdwwppww","ddddddddddddd"]
+});
+const DEFORG={i:["Company","Battalion"],c:["Troop","Squadron"]};
+function uname(u){const f=team[u.o],b=f.units[u.t];if(!u.lv)return b;const g=Object.assign({},DEFORG,f.org)[u.t==='cavalry'?'c':'i'];return b+" "+g[u.lv-1];}
+function mergeMates(u){return units.filter(x=>x!==u&&x.o===u.o&&x.t===u.t&&(x.lv||0)===(u.lv||0)&&dist(u,x)<=1).sort((a,b)=>dist(u,a)-dist(u,b));}
+function mergeOK(u){if(u.t==='settler'||(u.lv||0)>=2)return false;const m=mergeMates(u).slice(0,2);return m.length===2&&units.filter(x=>x.c===u.c&&x.r===u.r).every(x=>x===u||m.includes(x));}
+const canMerge=u=>u&&u.o===0&&mergeOK(u);
+function merge(u){
+  const m=mergeMates(u).slice(0,2),tot=u.hp+m[0].hp+m[1].hp;
+  units=units.filter(x=>x!==m[0]&&x!==m[1]);
+  u.lv=(u.lv||0)+1;u.hp=Math.round(tot*.8);u.mv=0;
+  if(u.o===0)say(`Your troops formed a ${uname(u)}!`);
+}
+function rowsOf(name,fa){const a0=(SPR[E.set]&&SPR[E.set][name])||SPR[name],ov=fa&&fa.ov&&fa.ov[name];return ov?a0.map((r,j)=>ov[j]!==undefined?ov[j]:r):a0;}
+function half(a){const w=Math.max(...a.map(r=>r.length)),o=[];for(let j=0;j<a.length;j+=2){let s='';for(let i=0;i<w;i+=2){const q=[(a[j]||'')[i],(a[j]||'')[i+1],(a[j+1]||'')[i],(a[j+1]||'')[i+1]].filter(x=>x&&x!=='.');s+=q.length?q[0]:'.';}o.push(s);}return o;}
+function paint(a,cx,cy,o,dim,flip,sc,fa){
+  const w=Math.max(...a.map(r=>r.length)),h=a.length,x0=Math.round(cx-w*sc/2),y0=Math.round(cy-h*sc/2);
+  for(let j=0;j<h;j++)for(let i=0;i<w;i++){
+    const ch=a[j][flip?w-1-i:i];if(!ch||ch==='.')continue;
+    ctx.fillStyle=ch==='p'?OWN[o]:(fa&&fa.pal&&fa.pal[ch])||PAL[ch];ctx.fillRect(x0+i*sc,y0+j*sc,sc,sc);
+    if(dim){ctx.fillStyle="rgba(0,0,0,.45)";ctx.fillRect(x0+i*sc,y0+j*sc,sc,sc);}
+  }
+}
+function spr(name,cx,cy,o,dim,flip,sc,fa,mini){const a=rowsOf(name,fa);paint(mini?half(a):a,cx,cy,o,dim,flip,mini?1:(sc||1),fa);}
+// A merged unit is drawn as a block of tiny soldiers: 3 in a row (rank 1) or 3x3 (rank 2)
+function block(u,x,cy,dim){
+  const rows=u.lv===1?1:3,h=rows===1?15:29,w=36,top=cy-Math.floor(h/2);
+  ctx.fillStyle="#0f0b14";ctx.fillRect(x-w/2-1,top-1,w+2,h+2);
+  ctx.fillStyle=OWN[u.o];ctx.globalAlpha=.6;ctx.fillRect(x-w/2,top,w,h);ctx.globalAlpha=1;
+  ctx.fillStyle="#ffcc33";for(let k=0;k<u.lv;k++)ctx.fillRect(x-w/2+2,top+2+k*3,5,1);
+  for(let r=0;r<rows;r++)for(let i=0;i<3;i++)spr(u.t,x+(i-1)*11,cy+(r-(rows-1)/2)*8,u.o,dim,u.o%2===0,1,team[u.o],true);
+}
+const inHex=(dx,dy,s)=>{const ax=Math.abs(dx),ay=Math.abs(dy);return ax<=SQ/2*s&&ay<=s-ax/SQ;};
+function hexPx(x,y,fn){for(let j=-S;j<=S;j++)for(let i=-S;i<=S;i++)fn(i,j,x+i,y+j);}
+function ring(c,r,col,dash){
+  const [x,y]=ctr(c,r).map(Math.round);ctx.fillStyle=col;
+  hexPx(x,y,(i,j,px,py)=>{if(inHex(i,j,S-1)&&!inHex(i,j,S-3)&&(!dash||(((i+j)>>1)&1)))ctx.fillRect(px,py,1,1);});
+}
+function draw(){
+  ctx.fillStyle="#1b1420";ctx.fillRect(0,0,cv.width,cv.height);
+  const opts=sel&&sel.t&&sel.o===0?options(sel):[];
+  for(let r=0;r<H;r++)for(let c=0;c<W;c++){
+    const t=map[r][c],[x,y]=ctr(c,r).map(Math.round);
+    hexPx(x,y,(i,j,px,py)=>{
+      if(!inHex(i,j,S))return;
+      let col=TERRAIN[t].c;
+      if(t===0){if(((i>>1)+j*3+c+r+40)%7===0)col="#5b8fd6";}
+      else if((i*7+j*13+c*3+r*5+99)%11<2)col=ALT[t];
+      if(!inHex(i,j,S-1.2))col="#0f0b14";
+      ctx.fillStyle=col;ctx.fillRect(px,py,1,1);
+    });
+    if(t===2){spr('tree',x-10,y+2,0,0,0,2);spr('tree',x+9,y-4,0,0,0,2);spr('tree',x,y+9,0,0,0,2);}
+    if(t===3)spr('peak',x,y+2,0,0,0,2);
+    if(res[r][c]===1)spr('res',x+10,y+10,0,0,0,2);
+    if(res[r][c]===3)spr('gold',x,y+8,0,0,0,2);
+  }
+  opts.forEach(o=>ring(o.c,o.r,o.atk?"#ff4a4a":"#ffffff",!o.atk));
+  if(sel)ring(sel.c,sel.r,"#ffffff",false);
+  cities.forEach(k=>{const [x,y]=ctr(k.c,k.r).map(Math.round);spr(team[k.o].base,x,y-(unitAt(k.c,k.r)?9:2),k.o,0,0,2);});
+  const grp={};units.forEach(u=>{(grp[u.c+','+u.r]=grp[u.c+','+u.r]||[]).push(u);});
+  Object.values(grp).forEach(g=>{
+    const n=g.length,[x,y0]=ctr(g[0].c,g[0].r).map(Math.round),cy=y0+(cityAt(g[0].c,g[0].r)?8:0);
+    if(n>=3)ring(g[0].c,g[0].r,"#ffcc33",false);
+    const P=n===1?[[0,0]]:n===2?[[-9,0],[9,0]]:[[-10,-4],[10,-4],[0,5]];
+    g.map((u,i)=>[u,P[i]]).sort((a,b)=>a[1][1]-b[1][1]).forEach(([u,[dx,dy]])=>{
+      if(u.lv)block(u,x+dx,cy+dy,u.o===0&&u.mv<=0);else spr(u.t,x+dx,cy+dy,u.o,u.o===0&&u.mv<=0,u.o%2===0,1,team[u.o]);
+      const by=cy+dy+(u.lv===2?17:10);
+      ctx.fillStyle="#0f0b14";ctx.fillRect(x+dx-6,by,12,3);
+      ctx.fillStyle=u.hp/maxHp(u)>.4?"#5be04b":"#ffb020";ctx.fillRect(x+dx-5,by+1,Math.max(1,Math.round(10*u.hp/maxHp(u))),1);
+      if(u===sel){ctx.fillStyle="#fff";ctx.fillRect(x+dx-2,cy+dy-17,5,1);ctx.fillRect(x+dx-1,cy+dy-16,3,1);ctx.fillRect(x+dx,cy+dy-15,1,1);}
+    });
+  });
+}
+
+// ---- Interface ----
+function ui(){
+  const mine=cities.filter(k=>k.o===0).length,theirs=cities.filter(k=>k.o>0).length;
+  $('stats').textContent=`Turn ${turn} · Your cities ${mine} · Rival cities ${theirs}`;
+  const info=$('info'),btns=$('btns');btns.innerHTML="";
+  const add=(label,fn,cls,dis)=>{const b=document.createElement('button');b.textContent=label;if(cls)b.className=cls;b.disabled=!!dis;b.onclick=fn;btns.appendChild(b);};
+  if(!sel){info.innerHTML="Nothing selected. Tap one of your units or cities.";}
+  else if(sel.t){
+    const n=uname(sel);
+    info.innerHTML=`<b>${n}</b> · Health ${sel.hp}${sel.lv?' · '+Math.pow(3,sel.lv)+' troops':''} · Moves left ${sel.mv} · on ${TERRAIN[map[sel.r][sel.c]].n}${units.filter(x=>x.c===sel.c&&x.r===sel.r&&x.o===sel.o).length>=3?' · FORMATION +'+team[sel.o].b.fb:''}`;
+    if(sel.t==='settler')add("Found "+E.fort,()=>{found(sel);draw();ui();},"primary",!canFound(sel));
+    if(canMerge(sel))add("Merge into "+uname({o:sel.o,t:sel.t,lv:(sel.lv||0)+1}),()=>{merge(sel);draw();ui();},"primary");
+    add("Skip",()=>{sel.mv=0;sel=null;draw();ui();});
+  } else {
+    info.innerHTML=`<b>${sel.name}</b> · Makes ${rate(sel)} production per turn · Training ${team[sel.o].units[sel.build]} ${sel.prod}/${costOf(sel.o,sel.build)}`;
+    ['warrior','archer','cavalry','settler'].forEach(b=>add(`Train ${team[0].units[b]} (${costOf(0,b)})`,()=>{sel.build=b;ui();},sel.build===b?"primary":""));
+  }
+  add("End turn",endTurn,sel?"":"primary");
+}
+cv.addEventListener('pointerdown',e=>{
+  if(over)return;
+  const b=cv.getBoundingClientRect(),px=(e.clientX-b.left)*cv.width/b.width,py=(e.clientY-b.top)*cv.height/b.height;
+  let best=null,bd=1e9;
+  for(let r=0;r<H;r++)for(let c=0;c<W;c++){const [x,y]=ctr(c,r),d=(x-px)**2+(y-py)**2;if(d<bd){bd=d;best=[c,r];}}
+  if(bd>S*S)return;
+  const [c,r]=best;
+  if(sel&&sel.t&&sel.o===0){
+    const o=options(sel).find(o=>o.c===c&&o.r===r);
+    if(o){o.atk?attack(sel,unitAt(c,r)):step(sel,c,r);checkEnd();draw();ui();return;}
+  }
+  const cand=[...units.filter(x=>x.c===c&&x.r===r&&x.o===0),...cities.filter(x=>x.c===c&&x.r===r&&x.o===0)];
+  const ix=cand.indexOf(sel);sel=cand.length?cand[(ix+1)%cand.length]:null;
+  draw();ui();
+});
+document.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{
+  const k=b.dataset.era?'era':'nt';
+  document.querySelectorAll('.opt').forEach(x=>{if(x.dataset[k])x.classList.toggle('primary',x===b);});
+  if(k==='era'){era=b.dataset.era;fid=0;renderFacts();}else NT=+b.dataset.nt;
+});
+function renderFacts(){
+  const box=$('facts');box.innerHTML='';
+  ERAS[era].f.forEach((f,i)=>{const b=document.createElement('button');b.textContent=f.name;b.style.borderColor=f.col;if(i===fid)b.classList.add('primary');b.onclick=()=>{fid=i;renderFacts();};box.appendChild(b);});
+  const f=ERAS[era].f[fid];$('fdesc').innerHTML='<b>'+f.name+'</b><br>'+f.desc;
+}
+renderFacts();
+$('go').onclick=()=>{$('start').style.display='none';started=true;init();music(E.f[fid].name,!muted);};
+$('again').onclick=()=>{$('over').style.display='none';$('start').style.display='flex';music(E.f[fid].name,false);};
+$('quit').onclick=()=>{$('qc').style.display='flex';};
+$('qno').onclick=()=>{$('qc').style.display='none';};
+$('qyes').onclick=()=>{$('qc').style.display='none';$('over').style.display='none';$('start').style.display='flex';music(E.f[fid].name,false);started=false;};
+$('mute').onclick=()=>{muted=!muted;$('mute').textContent='Music: '+(muted?'off':'on');music(E.f[fid].name,started&&!muted);};
+</script>
+</body>
+</html>
