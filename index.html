@@ -101,14 +101,16 @@ let AC,tmr,master;
 const mf=n=>440*Math.pow(2,(n-69)/12);
 function tone(f,s,d,type,v){const o=AC.createOscillator(),g=AC.createGain();o.type=type;o.frequency.value=f;g.gain.setValueAtTime(v,s);g.gain.setValueAtTime(v,s+d*.75);g.gain.linearRampToValueAtTime(.0001,s+d*.97);o.connect(g);g.connect(master);o.start(s);o.stop(s+d);}
 function loop(M,s){
-  let x=0;M.mel.forEach(([n,d])=>{if(n)tone(mf(n),s+x*M.u,d*M.u,M.w||'square',.05);x+=d;});
-  x=M.pre;M.roots.forEach(r=>{for(let k=0;k<M.bars/M.bs;k++){tone(mf(r+(k%2?7:0)),s+x*M.u,M.bs*M.u*.9,'triangle',.11);x+=M.bs;}});
+  let x=0;M.mel.forEach(([n,d])=>{if(n)tone(mf(n),s+x*M.u,d*M.u,M.w||'square',.11);x+=d;});
+  x=M.pre;M.roots.forEach(r=>{for(let k=0;k<M.bars/M.bs;k++){tone(mf(r+12+(k%2?7:0)),s+x*M.u,M.bs*M.u*.9,'triangle',.15);x+=M.bs;}});
 }
 function music(name,on){
   clearInterval(tmr);
   if(master){master.gain.value=0;master.disconnect();master=null;}
   if(!on)return;
   AC=AC||new (window.AudioContext||window.webkitAudioContext)();AC.resume();master=AC.createGain();master.connect(AC.destination);
+  try{if(navigator.audioSession)navigator.audioSession.type='playback';}catch(e){}
+  try{if(!window.__sil){const a=document.createElement('audio');a.src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';a.loop=true;a.setAttribute('playsinline','');window.__sil=a;}window.__sil.play().catch(()=>{});}catch(e){}
   const M=MUS[name],len=(M.pre+M.roots.length*M.bars)*M.u;let next=AC.currentTime+.1;
   const go=()=>{while(next<AC.currentTime+1.2){loop(M,next);next+=len;}};
   go();tmr=setInterval(go,500);
@@ -399,6 +401,9 @@ function renderFacts(){
 renderFacts();
 $('go').onclick=()=>{$('start').style.display='none';started=true;init();music(E.f[fid].name,!muted);};
 $('again').onclick=()=>{$('over').style.display='none';$('start').style.display='flex';music(E.f[fid].name,false);};
+const unlock=()=>{if(AC&&AC.state!=='running')AC.resume();};
+['touchend','click'].forEach(e=>document.addEventListener(e,unlock));
+document.addEventListener('visibilitychange',unlock);
 $('quit').onclick=()=>{$('qc').style.display='flex';};
 $('qno').onclick=()=>{$('qc').style.display='none';};
 $('qyes').onclick=()=>{$('qc').style.display='none';$('over').style.display='none';$('start').style.display='flex';music(E.f[fid].name,false);started=false;};
