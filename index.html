@@ -37,10 +37,12 @@ button:disabled{opacity:.4;cursor:default}
     <div class="btns" id="btns"></div></div>
   <div class="help">Tap a blue unit or town. Tap a marked hex to move; red means attack. Archers shoot 2 hexes, cavalry moves 3. Stack 3 units on one hex for a formation bonus (tap a stack again to switch units). Blue crystals boost nearby cities (+1 each); the central gold mine is worth 3x (+3). Merge 3 matching units on or beside each other into a bigger block (Company, then Battalion): they hit and defend much harder but only 1 block fits per hex. Capture every rival city to win.</div>
 </div>
-<div id="start"><h2>Kingsfall</h2><div>Choose your era</div>
+<div id="start"><h2>Kingsfall</h2><button id="mmute" style="font-size:8px;padding:6px 8px">Menu music: on</button><div style="font-size:8px;color:#b3a58a">Tap the screen to start the drums</div><div>Choose your era</div>
 <div class="btns"><button class="opt primary" data-era="anc">Ancient</button><button class="opt" data-era="nap">Napoleonic</button></div>
 <div>Your faction</div><div class="btns" id="facts"></div>
 <div id="fdesc" style="max-width:520px;font-size:9px;line-height:1.9;color:#ffcc33"></div>
+<div>Difficulty</div>
+<div class="btns"><button class="opt" data-dif="0">Recruit (Easy)</button><button class="opt primary" data-dif="1">Commander (Medium)</button><button class="opt" data-dif="2">Warlord (Hard)</button></div>
 <div>Number of teams</div>
 <div class="btns"><button class="opt primary" data-nt="2">2</button><button class="opt" data-nt="3">3</button><button class="opt" data-nt="4">4</button></div>
 <button class="primary" id="go">Start game</button></div>
@@ -115,6 +117,34 @@ function music(name,on){
   const go=()=>{while(next<AC.currentTime+1.2){loop(M,next);next+=len;}};
   go();tmr=setInterval(go,500);
 }
+const DIFFS=[{n:"Recruit",p:.6,cap:4,s:-1,m:false},{n:"Commander",p:1,cap:6,s:0,m:true},{n:"Warlord",p:1.5,cap:8,s:1,m:true}];
+let dif=1,DIF=DIFFS[1];
+// ---- Main menu music: war drums, snare rolls and a brass-like pad (D minor) ----
+let MM,mtmr,NB,menuArmed=false,menuMuted=false;
+function timp(s,v){const o=AC.createOscillator(),g=AC.createGain();o.type='sine';o.frequency.setValueAtTime(115,s);o.frequency.exponentialRampToValueAtTime(46,s+.25);g.gain.setValueAtTime(v,s);g.gain.exponentialRampToValueAtTime(.001,s+1);o.connect(g);g.connect(MM);o.start(s);o.stop(s+1.05);}
+function snare(s,v){const n=AC.createBufferSource();n.buffer=NB;const f=AC.createBiquadFilter(),g=AC.createGain();f.type='highpass';f.frequency.value=1800;g.gain.setValueAtTime(v,s);g.gain.exponentialRampToValueAtTime(.001,s+.11);n.connect(f);f.connect(g);g.connect(MM);n.start(s);n.stop(s+.15);}
+function pad(notes,s,d){notes.forEach(n=>[1,1.004].forEach(dt=>{const o=AC.createOscillator(),f=AC.createBiquadFilter(),g=AC.createGain();o.type='sawtooth';o.frequency.value=mf(n)*dt;f.type='lowpass';f.frequency.setValueAtTime(450,s);f.frequency.linearRampToValueAtTime(1700,s+d*.85);g.gain.setValueAtTime(.0001,s);g.gain.linearRampToValueAtTime(.05,s+1.2);g.gain.setValueAtTime(.05,s+d-1.2);g.gain.linearRampToValueAtTime(.0001,s+d);o.connect(f);f.connect(g);g.connect(MM);o.start(s);o.stop(s+d);}));}
+const CH=[[38,50,53,57],[34,46,50,53],[43,46,50,55],[33,45,49,52]];
+function menuBar(t,i,B){
+  timp(t,i===0?1:.85);timp(t+2*B,.7);if(i%2)timp(t+3.5*B,.5);
+  if(i>=6)for(let k=0;k<16;k++)snare(t+k*B/4,.12+.3*((i-6)*16+k)/32);
+  else [.75,1.75,2.75,3,3.5].forEach(b=>snare(t+b*B,b===3?.22:.32));
+  if(i%2===0)pad(CH[i/2],t,8*B);
+}
+function menuMusic(on){
+  clearInterval(mtmr);
+  if(MM){MM.gain.value=0;MM.disconnect();MM=null;}
+  if(!on)return;
+  AC=AC||new (window.AudioContext||window.webkitAudioContext)();AC.resume();
+  try{if(navigator.audioSession)navigator.audioSession.type='playback';}catch(e){}
+  try{if(!window.__sil){const a=document.createElement('audio');a.src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';a.loop=true;a.setAttribute('playsinline','');window.__sil=a;}window.__sil.play().catch(()=>{});}catch(e){}
+  MM=AC.createGain();MM.connect(AC.destination);
+  NB=AC.createBuffer(1,Math.floor(AC.sampleRate*.3),AC.sampleRate);const d=NB.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+  const B=.8;let t=AC.currentTime+.1,bar=0;
+  const go=()=>{while(t<AC.currentTime+1.5){menuBar(t,bar%8,B);t+=4*B;bar++;}};
+  go();mtmr=setInterval(go,300);
+}
+const showMenu=()=>{$('start').style.display='flex';menuArmed=true;if(!menuMuted)menuMusic(true);};
 const $=id=>document.getElementById(id);
 const ctr=(c,r)=>[SQ*S*(c+.5*(r&1))+SQ*S/2+2, S*1.5*r+S+2];
 function nb(c,r){
@@ -133,7 +163,7 @@ const say=t=>{logMsg=t;$('log').textContent=t};
 const STARTS=[[1,7],[8,1],[1,1],[8,7]];
 let team=[],res=[];
 function init(){
-  E=ERAS[era];
+  E=ERAS[era];DIF=DIFFS[dif];
   const rivals=E.f.filter((f,i)=>i!==fid).sort(()=>Math.random()-.5);
   team=[E.f[fid],...rivals.slice(0,NT-1)];OWN=team.map(f=>f.col);team.forEach(f=>f.b=Object.assign({sb:{},fb:3,pb:0,cd:{},mv:{},hp:0,rm:1,tb:0},f.bon));
   map=[];res=[];
@@ -159,7 +189,7 @@ function init(){
 
 // ---- Rules ----
 function strength(u,c,r){
-  const B=team[u.o].b,base=UNIT[u.t].str+[0,2,4][u.lv||0]+(B.sb[u.t]||0)+(map[r][c]>=2?B.tb:0)+(units.filter(x=>x.c===c&&x.r===r&&x.o===u.o).length>=3?B.fb:0);
+  const B=team[u.o].b,base=UNIT[u.t].str+(u.o>0?DIF.s:0)+[0,2,4][u.lv||0]+(B.sb[u.t]||0)+(map[r][c]>=2?B.tb:0)+(units.filter(x=>x.c===c&&x.r===r&&x.o===u.o).length>=3?B.fb:0);
   return base+DEF_BONUS[map[r][c]]+(cityAt(c,r)?2:0);
 }
 function options(u){
@@ -216,11 +246,11 @@ function endTurn(){
   });
   // Rival teams
   cities.filter(k=>k.o>0).forEach(k=>{
-    k.prod+=rate(k);
+    k.prod+=rate(k)*DIF.p;
     const b=['warrior','archer','cavalry'][Math.floor(Math.random()*3)];
-    if(k.prod>=costOf(k.o,b)&&units.filter(x=>x.o===k.o).length<6&&spawn({...k,build:b}))k.prod-=costOf(k.o,b);
+    if(k.prod>=costOf(k.o,b)&&units.filter(x=>x.o===k.o).length<DIF.cap&&spawn({...k,build:b}))k.prod-=costOf(k.o,b);
   });
-  units.filter(u=>u.o>0).forEach(u=>{if(units.includes(u)&&mergeOK(u))merge(u);});
+  units.filter(u=>u.o>0).forEach(u=>{if(DIF.m&&units.includes(u)&&mergeOK(u))merge(u);});
   units.filter(u=>u.o>0).forEach(u=>u.mv=mvOf(u));
   units.filter(u=>u.o>0).forEach(enemyAct);
   units.forEach(u=>{u.mv=u.o>0?0:mvOf(u);});
@@ -357,7 +387,7 @@ function draw(){
 // ---- Interface ----
 function ui(){
   const mine=cities.filter(k=>k.o===0).length,theirs=cities.filter(k=>k.o>0).length;
-  $('stats').textContent=`Turn ${turn} · Your cities ${mine} · Rival cities ${theirs}`;
+  $('stats').textContent=`${DIF.n} · Turn ${turn} · Your cities ${mine} · Rival cities ${theirs}`;
   const info=$('info'),btns=$('btns');btns.innerHTML="";
   const add=(label,fn,cls,dis)=>{const b=document.createElement('button');b.textContent=label;if(cls)b.className=cls;b.disabled=!!dis;b.onclick=fn;btns.appendChild(b);};
   if(!sel){info.innerHTML="Nothing selected. Tap one of your units or cities.";}
@@ -389,9 +419,9 @@ cv.addEventListener('pointerdown',e=>{
   draw();ui();
 });
 document.querySelectorAll('.opt').forEach(b=>b.onclick=()=>{
-  const k=b.dataset.era?'era':'nt';
+  const k=b.dataset.era?'era':b.dataset.dif!==undefined?'dif':'nt';
   document.querySelectorAll('.opt').forEach(x=>{if(x.dataset[k])x.classList.toggle('primary',x===b);});
-  if(k==='era'){era=b.dataset.era;fid=0;renderFacts();}else NT=+b.dataset.nt;
+  if(k==='era'){era=b.dataset.era;fid=0;renderFacts();}else if(k==='dif')dif=+b.dataset.dif;else NT=+b.dataset.nt;
 });
 function renderFacts(){
   const box=$('facts');box.innerHTML='';
@@ -399,14 +429,16 @@ function renderFacts(){
   const f=ERAS[era].f[fid];$('fdesc').innerHTML='<b>'+f.name+'</b><br>'+f.desc;
 }
 renderFacts();
-$('go').onclick=()=>{$('start').style.display='none';started=true;init();music(E.f[fid].name,!muted);};
-$('again').onclick=()=>{$('over').style.display='none';$('start').style.display='flex';music(E.f[fid].name,false);};
+$('go').onclick=()=>{$('start').style.display='none';menuMusic(false);started=true;init();music(E.f[fid].name,!muted);};
+$('again').onclick=()=>{$('over').style.display='none';music(E.f[fid].name,false);showMenu();};
 const unlock=()=>{if(AC&&AC.state!=='running')AC.resume();};
 ['touchend','click'].forEach(e=>document.addEventListener(e,unlock));
 document.addEventListener('visibilitychange',unlock);
+$('start').addEventListener('pointerdown',()=>{if(!menuArmed){menuArmed=true;if(!menuMuted)menuMusic(true);}});
+$('mmute').onclick=()=>{menuMuted=!menuMuted;$('mmute').textContent='Menu music: '+(menuMuted?'off':'on');menuMusic(menuArmed&&!menuMuted);};
 $('quit').onclick=()=>{$('qc').style.display='flex';};
 $('qno').onclick=()=>{$('qc').style.display='none';};
-$('qyes').onclick=()=>{$('qc').style.display='none';$('over').style.display='none';$('start').style.display='flex';music(E.f[fid].name,false);started=false;};
+$('qyes').onclick=()=>{$('qc').style.display='none';$('over').style.display='none';music(E.f[fid].name,false);started=false;showMenu();};
 $('mute').onclick=()=>{muted=!muted;$('mute').textContent='Music: '+(muted?'off':'on');music(E.f[fid].name,started&&!muted);};
 </script>
 </body>
