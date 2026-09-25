@@ -35,7 +35,7 @@ button:disabled{opacity:.4;cursor:default}
   <canvas id="cv"></canvas>
   <div class="panel"><div id="info"></div><div id="log"></div>
     <div class="btns" id="btns"></div></div>
-  <div class="help">Tap a blue unit or town. Tap a marked hex to move; red means attack. Archers shoot 2 hexes, cavalry moves 3. Stack 3 units on one hex for a formation bonus (tap a stack again to switch units). Blue crystals boost nearby cities (+1 each); the central gold mine is worth 3x (+3). Merge 3 matching units on or beside each other into a bigger block (Company, then Battalion): they hit and defend much harder but only 1 block fits per hex. Capture every rival city to win.</div>
+  <div class="help">Tap a blue unit or town. Tap a marked hex to move; red means attack. Archers shoot 2 hexes, cavalry moves 3. Stack 3 units on one hex for a formation bonus (tap a stack again to switch units). Blue crystals boost nearby cities (+1 each); the central gold mine is worth 3x (+3). Merge 3 matching units on or beside each other into a bigger block (Company, then Battalion): they hit and defend much harder but only 1 block fits per hex. Builders make walls on adjacent hexes; walls block everyone until they are attacked and broken. Capture every rival city to win.</div>
 </div>
 <div id="start"><h2>Kingsfall</h2><button id="mmute" style="font-size:8px;padding:6px 8px">Menu music: on</button><div style="font-size:8px;color:#b3a58a">Tap the screen to start the drums</div><div>Choose your era</div>
 <div class="btns"><button class="opt primary" data-era="anc">Ancient</button><button class="opt" data-era="nap">Napoleonic</button></div>
@@ -52,7 +52,7 @@ button:disabled{opacity:.4;cursor:default}
 <script>
 // ---- Settings you can tweak ----
 const W=10, H=9, S=22;                 // map columns, rows, tile size
-const COST={warrior:4,archer:5,cavalry:6,settler:6};    // production needed to train each unit
+const COST={warrior:4,archer:5,cavalry:6,settler:6,builder:5};    // production needed to train each unit
 const NAMES=["Kingsholt","Stonebridge","Oakhaven","Ravenmoor","Wyndale"];
 const TERRAIN=[{n:"Sea",c:"#2f5fb0"},{n:"Plains",c:"#5aa63c"},{n:"Forest",c:"#3b7d2c"},{n:"Hills",c:"#a08d6a"}];
 const DEF_BONUS=[0,0,1,2], MOVE_COST=[9,1,2,2];
@@ -61,7 +61,7 @@ const cv=document.getElementById('cv'), ctx=cv.getContext('2d');
 cv.width=Math.ceil(SQ*S*(W+.5))+4; cv.height=Math.ceil(S*1.5*(H-1)+2*S)+4;
 let map,units,cities,sel,turn,over,logMsg,cityCount;
 
-const UNIT={warrior:{str:5,hp:10,mv:2},archer:{str:4,hp:8,mv:2},cavalry:{str:6,hp:10,mv:3},settler:{str:1,hp:6,mv:2}};
+const UNIT={warrior:{str:5,hp:10,mv:2},archer:{str:4,hp:8,mv:2},cavalry:{str:6,hp:10,mv:3},settler:{str:1,hp:6,mv:2},builder:{str:1,hp:6,mv:2}};
 const ERAS={
  anc:{set:'med',fort:"city",f:[
   {name:"Rome",col:"#c0282d",base:"b_rome",cap:"Rome",cities:["Ostia","Capua","Ravenna","Massilia","Carthago Nova"],units:{warrior:"Legionary",archer:"Sagittarius",cavalry:"Equites",settler:"Colonist"},pal:{}},
@@ -74,6 +74,7 @@ const ERAS={
   {name:"Britain",col:"#c8323c",base:"b_britain",cap:"London",cities:["Portsmouth","Bristol","Liverpool","Edinburgh","Dover"],units:{warrior:"Redcoat",archer:"Rifleman",cavalry:"Light Dragoon",settler:"Colonist"},pal:{k:"#ffffff"}},
   {name:"Spain",col:"#e3b023",base:"b_spain",cap:"Madrid",cities:["Seville","Barcelona","Valencia","Cadiz","Zaragoza"],units:{warrior:"Infantry",archer:"Guerrillero",cavalry:"Lancer",settler:"Settler"},pal:{w:"#e8dcb0"}}]}
 };
+const BN={Rome:"Faber",Parthia:"Mason",Han:"Artisan",Carthage:"Builder",France:"Sapeur",Russia:"Pioneer",Britain:"Sapper",Spain:"Zapador"};
 const EXTRA={
  Rome:{desc:"STRENGTH: formations get +5 (not +3); roads give every city +1 production. WEAKNESS: Equites cost +2.",bon:{fb:5,pb:1,cd:{cavalry:2}},org:{i:["Century","Cohort"],c:["Turma","Ala"]}},
  Parthia:{desc:"STRENGTH: Foot Archers +2 strength; Cataphracts move 4. WEAKNESS: Spearmen -1 strength; cities -1 production.",bon:{sb:{archer:2,warrior:-1},mv:{cavalry:1},pb:-1},org:{i:["Company","Host"]},pal2:{b:"#9a9aa6"},ov:{warrior:{0:"..........y.....",7:"........pppp....",8:"........pppp....",9:"........pppp....",10:"........pppp...."},archer:{0:"........yyyy....",1:".......yyyyyy..."}}},
@@ -84,7 +85,7 @@ const EXTRA={
  Britain:{desc:"STRENGTH: Baker rifles, Riflemen +2 strength; trade wealth +1 production per city. WEAKNESS: small army, Redcoats cost +1.",bon:{sb:{archer:2},pb:1,cd:{warrior:1}},pal2:{b:"#8a8a8a"},ov:{warrior:{1:".........w......",3:"........dwwd....",9:"...pwpwpwpppzzz."}}},
  Spain:{desc:"STRENGTH: guerrilla war, +2 strength in forests and hills. WEAKNESS: Lancers -1 strength; cities -1 production.",bon:{tb:2,sb:{cavalry:-1},pb:-1},pal2:{b:"#e8e8e8"},ov:{warrior:{0:"................",1:".........k......",2:"......d..dd.....",3:".....dddddd.....",4:"....dddddddd...."}}}
 };
-[...ERAS.anc.f,...ERAS.nap.f].forEach(f=>{const X=EXTRA[f.name];f.desc=X.desc;f.bon=X.bon;f.ov=X.ov||{};f.org=X.org||{};Object.assign(f.pal,X.pal2||{});});
+[...ERAS.anc.f,...ERAS.nap.f].forEach(f=>{const X=EXTRA[f.name];f.desc=X.desc;f.bon=X.bon;f.ov=X.ov||{};f.org=X.org||{};f.units.builder=BN[f.name];Object.assign(f.pal,X.pal2||{});});
 const hpOf=(o,t)=>UNIT[t].hp+team[o].b.hp, mvOf=u=>Math.max(1,UNIT[u.t].mv+(team[u.o].b.mv[u.t]||0)-((u.lv||0)>=2?1:0)), maxHp=u=>Math.round(hpOf(u.o,u.t)*[1,2.4,5.8][u.lv||0]);
 const costOf=(o,t)=>Math.max(3,COST[t]+(team[o].b.cd[t]||0)+(team[o].b.cd.all||0));
 let era='anc',fid=0,NT=2,E=ERAS.anc,started=false,muted=false;
@@ -173,7 +174,7 @@ function init(){
     if(map[r][c]>0&&!res[r][c]&&STARTS.every(([a,b])=>dist({c,r},{c:a,r:b})>2))res[r][c]=1;}
   if(map[4][5]===0)map[4][5]=1;
   res[4][5]=3;
-  units=[];cities=[];
+  units=[];cities=[];walls=[];buildMode=false;
   const mk=(t,o,c,r)=>units.push({t,o,c,r,hp:hpOf(o,t),mv:mvOf({t,o})});
   for(let i=0;i<NT;i++){
     const [c,r]=STARTS[i],[x,y]=nb(c,r)[0];
@@ -197,6 +198,8 @@ function options(u){
   const out=[];
   nb(u.c,u.r).forEach(([c,r])=>{
     if(map[r][c]===0)return;
+    const wl=wallAt(c,r);
+    if(wl){if(wl.o!==u.o&&u.t!=='settler'&&u.t!=='builder')out.push({c,r,atk:true,wall:true});return;}
     const e=unitAt(c,r), k=cityAt(c,r);
     if(e){ if(e.o!==u.o){ if(u.t!=='settler')out.push({c,r,atk:true}); } else if(!u.lv&&units.filter(x=>x.c===c&&x.r===r).length<3&&units.every(x=>x.c!==c||x.r!==r||!x.lv))out.push({c,r}); }
     else out.push({c,r});
@@ -231,7 +234,7 @@ function found(u){
 }
 function rate(k){const B=team[k.o].b;return Math.max(1,2+B.pb+B.rm*(res[k.r][k.c]+nb(k.c,k.r).reduce((s,[c,r])=>s+res[r][c],0)));}
 function spawn(k){
-  const spots=[[k.c,k.r],...nb(k.c,k.r)].filter(([c,r])=>{const at=units.filter(x=>x.c===c&&x.r===r);return map[r][c]>0&&at.length<3&&at.every(x=>x.o===k.o&&!x.lv);});
+  const spots=[[k.c,k.r],...nb(k.c,k.r)].filter(([c,r])=>{const at=units.filter(x=>x.c===c&&x.r===r);return map[r][c]>0&&!wallAt(c,r)&&at.length<3&&at.every(x=>x.o===k.o&&!x.lv);});
   if(!spots.length)return false;
   const [c,r]=spots[0];
   units.push({t:k.build,o:k.o,c,r,hp:hpOf(k.o,k.build),mv:0});
@@ -254,7 +257,7 @@ function endTurn(){
   units.filter(u=>u.o>0).forEach(u=>u.mv=mvOf(u));
   units.filter(u=>u.o>0).forEach(enemyAct);
   units.forEach(u=>{u.mv=u.o>0?0:mvOf(u);});
-  turn++;sel=null;
+  turn++;sel=null;buildMode=false;
   checkEnd();draw();ui();
 }
 function enemyAct(u){
@@ -264,13 +267,13 @@ function enemyAct(u){
   const near=foes.length?foes.reduce((a,b)=>dist(u,a)<=dist(u,b)?a:b):null;
   if(home&&mine<2&&(!near||dist(u,near)>3))return;   // keep one guard home
   for(let i=0;i<mvOf(u)&&units.includes(u)&&u.mv>0&&near;i++){
-    const opts=options(u);
-    const hit=opts.find(o=>o.atk);
+    const opts=options(u),hit=opts.find(o=>o.atk&&!o.wall);
     if(hit){attack(u,unitAt(hit.c,hit.r));return;}
-    if(!opts.length)return;
-    opts.sort((a,b)=>dist(a,near)-dist(b,near));
-    if(dist(opts[0],near)>=dist(u,near)&&i>0)return;
-    step(u,opts[0].c,opts[0].r);
+    const mvs=opts.filter(o=>!o.atk).sort((a,b)=>dist(a,near)-dist(b,near)),wl=opts.find(o=>o.wall);
+    if(mvs.length&&dist(mvs[0],near)<dist(u,near)){step(u,mvs[0].c,mvs[0].r);continue;}
+    if(wl){hitWall(u,wallAt(wl.c,wl.r));return;}
+    if(!mvs.length||i>0)return;
+    step(u,mvs[0].c,mvs[0].r);
   }
 }
 function checkEnd(){
@@ -315,7 +318,7 @@ Object.assign(SPR,{
 const DEFORG={i:["Company","Battalion"],c:["Troop","Squadron"]};
 function uname(u){const f=team[u.o],b=f.units[u.t];if(!u.lv)return b;const g=Object.assign({},DEFORG,f.org)[u.t==='cavalry'?'c':'i'];return b+" "+g[u.lv-1];}
 function mergeMates(u){return units.filter(x=>x!==u&&x.o===u.o&&x.t===u.t&&(x.lv||0)===(u.lv||0)&&dist(u,x)<=1).sort((a,b)=>dist(u,a)-dist(u,b));}
-function mergeOK(u){if(u.t==='settler'||(u.lv||0)>=2)return false;const m=mergeMates(u).slice(0,2);return m.length===2&&units.filter(x=>x.c===u.c&&x.r===u.r).every(x=>x===u||m.includes(x));}
+function mergeOK(u){if(u.t==='settler'||u.t==='builder'||(u.lv||0)>=2)return false;const m=mergeMates(u).slice(0,2);return m.length===2&&units.filter(x=>x.c===u.c&&x.r===u.r).every(x=>x===u||m.includes(x));}
 const canMerge=u=>u&&u.o===0&&mergeOK(u);
 function merge(u){
   const m=mergeMates(u).slice(0,2),tot=u.hp+m[0].hp+m[1].hp;
@@ -323,6 +326,19 @@ function merge(u){
   u.lv=(u.lv||0)+1;u.hp=Math.round(tot*.8);u.mv=0;
   if(u.o===0)say(`Your troops formed a ${uname(u)}!`);
 }
+let walls=[],buildMode=false;const WALL_HP=12;
+const wallAt=(c,r)=>walls.find(w=>w.c===c&&w.r===r);
+const buildTiles=u=>nb(u.c,u.r).filter(([c,r])=>map[r][c]>0&&!unitAt(c,r)&&!cityAt(c,r)&&!wallAt(c,r)).map(([c,r])=>({c,r}));
+function buildWall(u,c,r){walls.push({c,r,hp:WALL_HP,o:u.o});u.mv=0;if(u.o===0)say("Wall built. Enemies must break it to pass.");}
+function hitWall(a,w){
+  const d=Math.max(1,Math.round((UNIT[a.t].str+[0,2,4][a.lv||0])*(.5+Math.random()*.6)*[1,2,4][a.lv||0]));
+  w.hp-=d;a.mv=0;
+  if(w.hp<=0){walls=walls.filter(x=>x!==w);say(`${uname(a)} smashed a wall!`);}
+  else say(`${uname(a)} hit a wall (${w.hp} left).`);
+}
+SPR.med.builder=[".......dddd.....","......dbbbbd....","........ssd.....","........ssss....","yyy.....pppp....","yyyb....pppp.zz.","..bbbs..ppppzzz.","....bb..ppppzz..","........bbbb....","........nnnn....","........nn.nn...","........nn.nn...","........dd.dd..."];
+SPR.nap.builder=SPR.med.builder;
+SPR.wall=["d.d.d.d.d.d.d","dcccccccccccd","dcyccyccyccyd","dcccpppcccccd","dccyccyccyccd","dcccccccccccd","ddddddddddddd"];
 function rowsOf(name,fa){const a0=(SPR[E.set]&&SPR[E.set][name])||SPR[name],ov=fa&&fa.ov&&fa.ov[name];return ov?a0.map((r,j)=>ov[j]!==undefined?ov[j]:r):a0;}
 function half(a){const w=Math.max(...a.map(r=>r.length)),o=[];for(let j=0;j<a.length;j+=2){let s='';for(let i=0;i<w;i+=2){const q=[(a[j]||'')[i],(a[j]||'')[i+1],(a[j+1]||'')[i],(a[j+1]||'')[i+1]].filter(x=>x&&x!=='.');s+=q.length?q[0]:'.';}o.push(s);}return o;}
 function paint(a,cx,cy,o,dim,flip,sc,fa){
@@ -350,7 +366,7 @@ function ring(c,r,col,dash){
 }
 function draw(){
   ctx.fillStyle="#1b1420";ctx.fillRect(0,0,cv.width,cv.height);
-  const opts=sel&&sel.t&&sel.o===0?options(sel):[];
+  const opts=sel&&sel.t&&sel.o===0&&!buildMode?options(sel):[];
   for(let r=0;r<H;r++)for(let c=0;c<W;c++){
     const t=map[r][c],[x,y]=ctr(c,r).map(Math.round);
     hexPx(x,y,(i,j,px,py)=>{
@@ -365,8 +381,14 @@ function draw(){
     if(t===3)spr('peak',x,y+2,0,0,0,2);
     if(res[r][c]===1)spr('res',x+10,y+10,0,0,0,2);
     if(res[r][c]===3)spr('gold',x,y+8,0,0,0,2);
+    const wl=wallAt(c,r);
+    if(wl){spr('wall',x,y+2,wl.o,0,0,2);
+      if(wl.hp<=8){ctx.fillStyle="#0f0b14";ctx.fillRect(x-4,y-3,2,6);ctx.fillRect(x+4,y,2,5);}
+      if(wl.hp<=4){ctx.fillRect(x,y-4,2,7);ctx.fillRect(x-8,y+1,2,4);}
+      ctx.fillStyle="#0f0b14";ctx.fillRect(x-8,y+11,16,3);ctx.fillStyle="#5be04b";ctx.fillRect(x-7,y+12,Math.max(1,Math.round(14*wl.hp/WALL_HP)),1);}
   }
   opts.forEach(o=>ring(o.c,o.r,o.atk?"#ff4a4a":"#ffffff",!o.atk));
+  if(buildMode&&sel&&sel.t==='builder')buildTiles(sel).forEach(o=>ring(o.c,o.r,"#ff9a2a",true));
   if(sel)ring(sel.c,sel.r,"#ffffff",false);
   cities.forEach(k=>{const [x,y]=ctr(k.c,k.r).map(Math.round);spr(team[k.o].base,x,y-(unitAt(k.c,k.r)?9:2),k.o,0,0,2);});
   const grp={};units.forEach(u=>{(grp[u.c+','+u.r]=grp[u.c+','+u.r]||[]).push(u);});
@@ -395,11 +417,12 @@ function ui(){
     const n=uname(sel);
     info.innerHTML=`<b>${n}</b> · Health ${sel.hp}${sel.lv?' · '+Math.pow(3,sel.lv)+' troops':''} · Moves left ${sel.mv} · on ${TERRAIN[map[sel.r][sel.c]].n}${units.filter(x=>x.c===sel.c&&x.r===sel.r&&x.o===sel.o).length>=3?' · FORMATION +'+team[sel.o].b.fb:''}`;
     if(sel.t==='settler')add("Found "+E.fort,()=>{found(sel);draw();ui();},"primary",!canFound(sel));
+    if(sel.t==='builder')add(buildMode?"Cancel":"Build wall",()=>{buildMode=!buildMode;draw();ui();},"primary",sel.mv<=0);
     if(canMerge(sel))add("Merge into "+uname({o:sel.o,t:sel.t,lv:(sel.lv||0)+1}),()=>{merge(sel);draw();ui();},"primary");
     add("Skip",()=>{sel.mv=0;sel=null;draw();ui();});
   } else {
     info.innerHTML=`<b>${sel.name}</b> · Makes ${rate(sel)} production per turn · Training ${team[sel.o].units[sel.build]} ${sel.prod}/${costOf(sel.o,sel.build)}`;
-    ['warrior','archer','cavalry','settler'].forEach(b=>add(`Train ${team[0].units[b]} (${costOf(0,b)})`,()=>{sel.build=b;ui();},sel.build===b?"primary":""));
+    ['warrior','archer','cavalry','builder','settler'].forEach(b=>add(`Train ${team[0].units[b]} (${costOf(0,b)})`,()=>{sel.build=b;ui();},sel.build===b?"primary":""));
   }
   add("End turn",endTurn,sel?"":"primary");
 }
@@ -410,9 +433,10 @@ cv.addEventListener('pointerdown',e=>{
   for(let r=0;r<H;r++)for(let c=0;c<W;c++){const [x,y]=ctr(c,r),d=(x-px)**2+(y-py)**2;if(d<bd){bd=d;best=[c,r];}}
   if(bd>S*S)return;
   const [c,r]=best;
+  if(sel&&sel.t==='builder'&&buildMode){const bt=sel.mv>0&&buildTiles(sel).find(o=>o.c===c&&o.r===r);buildMode=false;if(bt){buildWall(sel,c,r);draw();ui();return;}}
   if(sel&&sel.t&&sel.o===0){
     const o=options(sel).find(o=>o.c===c&&o.r===r);
-    if(o){o.atk?attack(sel,unitAt(c,r)):step(sel,c,r);checkEnd();draw();ui();return;}
+    if(o){o.atk?(o.wall?hitWall(sel,wallAt(c,r)):attack(sel,unitAt(c,r))):step(sel,c,r);checkEnd();draw();ui();return;}
   }
   const cand=[...units.filter(x=>x.c===c&&x.r===r&&x.o===0),...cities.filter(x=>x.c===c&&x.r===r&&x.o===0)];
   const ix=cand.indexOf(sel);sel=cand.length?cand[(ix+1)%cand.length]:null;
